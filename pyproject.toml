@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manifold-api"
+version = "0.1.0"
+description = "Central orchestration and administration API for the Manifold platform."
+requires-python = ">=3.10,<3.13"
+dependencies = []
+
+[tool.setuptools]
+include-package-data = true

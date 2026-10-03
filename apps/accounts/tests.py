@@ -3,7 +3,7 @@ from datetime import timedelta
 from django.test import TestCase
 from django.utils import timezone
 
-from .models import Session, User
+from .models import Session, User, AuthenticationChallenge
 from .services import SessionService
 from django.db import IntegrityError
 from .authentication import (
@@ -13,6 +13,11 @@ from .authentication import (
     CredentialAuthenticationResult,
     CredentialAuthenticationStatus,
 )
+from .challenge import (
+    AuthenticationChallengeService,
+    AuthenticationChallengeStatus,
+)
+
 from unittest.mock import patch
 
 
@@ -453,27 +458,37 @@ class AuthenticationServiceTests(TestCase):
         self.assertIsNotNone(result.token)
         self.assertIsNone(result.challenge_id)
 
-    def test_login_requires_two_factor_without_creating_session(self):
-        with patch.object(
-            AuthenticationService,
-            "requires_two_factor",
-            return_value=True,
-        ):
-            result = AuthenticationService.login(
-                "user@example.com",
-                "correct-password",
-            )
+    @patch(
+        "apps.accounts.authentication.AuthenticationService.requires_two_factor",
+        return_value=True,
+    )
+    def test_login_requires_two_factor_without_creating_session(
+        self,
+        requires_two_factor,
+    ):
+        result = AuthenticationService.login(
+            "user@example.com",
+            "correct-password",
+        )
 
         self.assertEqual(
             result.status,
             AuthenticationStatus.TWO_FACTOR_REQUIRED,
         )
-        self.assertTrue(result.requires_two_factor)
-        self.assertFalse(result.is_authenticated)
-        self.assertEqual(result.user, self.user)
+
         self.assertIsNone(result.session)
         self.assertIsNone(result.token)
-        self.assertIsNone(result.challenge_id)
+        self.assertIsNotNone(result.challenge_id)
+
+        self.assertEqual(
+            AuthenticationChallenge.objects.count(),
+            1,
+        )
+
+        self.assertEqual(
+            Session.objects.count(),
+            0,
+        )
 
     def test_authenticate_credentials_does_not_create_session(self):
         result = AuthenticationService.authenticate_credentials(
@@ -489,4 +504,208 @@ class AuthenticationServiceTests(TestCase):
         self.assertEqual(
             Session.objects.filter(user=self.user).count(),
             0,
+        )
+
+class AuthenticationChallengeServiceTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="challenge@example.com",
+            password="StrongPassword123!",
+        )
+
+    def test_create_email_challenge(self):
+        result = (
+            AuthenticationChallengeService
+            .create_email_challenge(self.user)
+        )
+
+        challenge = result.challenge
+
+        self.assertIsNotNone(challenge)
+        self.assertEqual(
+            challenge.user,
+            self.user,
+        )
+        self.assertEqual(
+            challenge.challenge_type,
+            AuthenticationChallenge.ChallengeType.EMAIL_OTP,
+        )
+        self.assertEqual(
+            len(result.verification_code),
+            6,
+        )
+        self.assertTrue(
+            result.verification_code.isdigit()
+        )
+        self.assertEqual(
+            challenge.attempts,
+            0,
+        )
+        self.assertIsNotNone(
+            challenge.expires_at
+        )
+
+    def test_verify_valid_code(self):
+        result = (
+            AuthenticationChallengeService
+            .create_email_challenge(self.user)
+        )
+
+        verification = (
+            AuthenticationChallengeService
+            .verify(
+                result.challenge.id,
+                result.verification_code,
+            )
+        )
+
+        self.assertEqual(
+            verification.status,
+            AuthenticationChallengeStatus.VERIFIED,
+        )
+        self.assertIsNotNone(
+            verification.challenge.verified_at
+        )
+
+    def test_verify_invalid_code(self):
+        result = (
+            AuthenticationChallengeService
+            .create_email_challenge(self.user)
+        )
+
+        verification = (
+            AuthenticationChallengeService
+            .verify(
+                result.challenge.id,
+                "000000",
+            )
+        )
+
+        self.assertEqual(
+            verification.status,
+            AuthenticationChallengeStatus.ACTIVE,
+        )
+        self.assertEqual(
+            verification.challenge.attempts,
+            1,
+        )
+        self.assertIsNone(
+            verification.challenge.verified_at
+        )
+
+    def test_challenge_exhausts_after_max_attempts(self):
+        result = (
+            AuthenticationChallengeService
+            .create_email_challenge(
+                self.user,
+                max_attempts=2,
+            )
+        )
+
+        first = AuthenticationChallengeService.verify(
+            result.challenge.id,
+            "000000",
+        )
+
+        self.assertEqual(
+            first.status,
+            AuthenticationChallengeStatus.ACTIVE,
+        )
+
+        second = AuthenticationChallengeService.verify(
+            result.challenge.id,
+            "000000",
+        )
+
+        self.assertEqual(
+            second.status,
+            AuthenticationChallengeStatus.EXHAUSTED,
+        )
+
+        self.assertIsNotNone(
+            second.challenge.revoked_at
+        )
+
+    def test_expired_challenge(self):
+        result = (
+            AuthenticationChallengeService
+            .create_email_challenge(
+                self.user,
+                duration=timedelta(seconds=-1),
+            )
+        )
+
+        verification = AuthenticationChallengeService.verify(
+            result.challenge.id,
+            result.verification_code,
+        )
+
+        self.assertEqual(
+            verification.status,
+            AuthenticationChallengeStatus.EXPIRED,
+        )
+
+    def test_revoke_active_challenge(self):
+        result = (
+            AuthenticationChallengeService
+            .create_email_challenge(self.user)
+        )
+
+        revoked = AuthenticationChallengeService.revoke(
+            result.challenge
+        )
+
+        self.assertTrue(revoked)
+
+        result.challenge.refresh_from_db()
+
+        self.assertIsNotNone(
+            result.challenge.revoked_at
+        )
+
+    def test_new_challenge_revokes_previous_one(self):
+        first = (
+            AuthenticationChallengeService
+            .create_email_challenge(self.user)
+        )
+
+        second = (
+            AuthenticationChallengeService
+            .create_email_challenge(self.user)
+        )
+
+        first.challenge.refresh_from_db()
+
+        self.assertIsNotNone(
+            first.challenge.revoked_at
+        )
+
+        self.assertIsNone(
+            second.challenge.revoked_at
+        )
+
+    def test_verified_challenge_cannot_be_reused(self):
+        result = (
+            AuthenticationChallengeService
+            .create_email_challenge(self.user)
+        )
+
+        first = AuthenticationChallengeService.verify(
+            result.challenge.id,
+            result.verification_code,
+        )
+
+        second = AuthenticationChallengeService.verify(
+            result.challenge.id,
+            result.verification_code,
+        )
+
+        self.assertEqual(
+            first.status,
+            AuthenticationChallengeStatus.VERIFIED,
+        )
+
+        self.assertEqual(
+            second.status,
+            AuthenticationChallengeStatus.VERIFIED,
         )

@@ -90,6 +90,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return self.email
 
+import uuid
+
+from django.conf import settings
+from django.db import models
+
 
 class Session(models.Model):
     id = models.UUIDField(
@@ -98,47 +103,39 @@ class Session(models.Model):
         editable=False,
         verbose_name="identificador",
     )
-
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="sessions",
         verbose_name="usuário",
     )
-
     token_hash = models.CharField(
         max_length=64,
         unique=True,
         verbose_name="hash do token",
     )
-
     created_at = models.DateTimeField(
         auto_now_add=True,
         verbose_name="data de criação",
     )
-
     expires_at = models.DateTimeField(
         verbose_name="data de expiração",
     )
-
     last_seen_at = models.DateTimeField(
         null=True,
         blank=True,
         verbose_name="último acesso",
     )
-
     revoked_at = models.DateTimeField(
         null=True,
         blank=True,
         verbose_name="data de revogação",
     )
-
     ip_address = models.GenericIPAddressField(
         null=True,
         blank=True,
         verbose_name="endereço IP",
     )
-
     user_agent = models.TextField(
         blank=True,
         verbose_name="user agent",
@@ -163,9 +160,82 @@ class Session(models.Model):
                 fields=("user",),
                 condition=models.Q(revoked_at__isnull=True),
                 name="session_one_active_per_user",
-            )
+            ),
         ]
-        
 
     def __str__(self):
         return f"{self.user.email} — {self.created_at:%d/%m/%Y %H:%M}"
+
+
+class AuthenticationChallenge(models.Model):
+    class ChallengeType(models.TextChoices):
+        EMAIL_OTP = "EMAIL_OTP", "Código por e-mail"
+
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        verbose_name="identificador",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="authentication_challenges",
+        verbose_name="usuário",
+    )
+    challenge_type = models.CharField(
+        max_length=32,
+        choices=ChallengeType.choices,
+        verbose_name="tipo",
+    )
+    token_hash = models.CharField(
+        max_length=64,
+        verbose_name="hash do código",
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="data de criação",
+    )
+    expires_at = models.DateTimeField(
+        verbose_name="data de expiração",
+    )
+    verified_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="data de validação",
+    )
+    revoked_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="data de revogação",
+    )
+    attempts = models.PositiveSmallIntegerField(
+        default=0,
+        verbose_name="tentativas",
+    )
+    max_attempts = models.PositiveSmallIntegerField(
+        default=5,
+        verbose_name="máximo de tentativas",
+    )
+
+    class Meta:
+        ordering = ("-created_at",)
+        verbose_name = "desafio de autenticação"
+        verbose_name_plural = "desafios de autenticação"
+        indexes = [
+            models.Index(
+                fields=("user", "revoked_at"),
+                name="challenge_user_active_idx",
+            ),
+            models.Index(
+                fields=("expires_at",),
+                name="challenge_expires_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.user.email} — "
+            f"{self.get_challenge_type_display()} — "
+            f"{self.created_at:%d/%m/%Y %H:%M}"
+        )

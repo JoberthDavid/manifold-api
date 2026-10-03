@@ -1,13 +1,15 @@
 from dataclasses import dataclass
 from enum import Enum
 
+from .challenge import AuthenticationChallengeService
 from .models import Session, User
 from .services import SessionService
-
+from .challenge import (
+    AuthenticationChallengeService,
+    AuthenticationChallengeStatus,
+)
 
 class CredentialAuthenticationStatus(str, Enum):
-    """Resultado da validação de e-mail e senha."""
-
     INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
     INACTIVE_USER = "INACTIVE_USER"
     VALID = "VALID"
@@ -15,8 +17,6 @@ class CredentialAuthenticationStatus(str, Enum):
 
 @dataclass(frozen=True)
 class CredentialAuthenticationResult:
-    """Resultado da primeira etapa da autenticação."""
-
     status: CredentialAuthenticationStatus
     user: User | None = None
 
@@ -26,8 +26,6 @@ class CredentialAuthenticationResult:
 
 
 class AuthenticationStatus(str, Enum):
-    """Estado final da tentativa de autenticação."""
-
     INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
     INACTIVE_USER = "INACTIVE_USER"
     TWO_FACTOR_REQUIRED = "TWO_FACTOR_REQUIRED"
@@ -36,8 +34,6 @@ class AuthenticationStatus(str, Enum):
 
 @dataclass(frozen=True)
 class AuthenticationResult:
-    """Resultado do processo de autenticação."""
-
     status: AuthenticationStatus
     user: User | None = None
     session: Session | None = None
@@ -54,20 +50,12 @@ class AuthenticationResult:
 
 
 class AuthenticationService:
-    """Autenticação de usuários e criação das respectivas sessões."""
-
     @classmethod
     def authenticate_credentials(
         cls,
         email: str,
         password: str,
     ) -> CredentialAuthenticationResult:
-        """
-        Valida as credenciais do usuário.
-
-        Esta operação não cria sessão e não produz token.
-        """
-
         if not email or not password:
             return CredentialAuthenticationResult(
                 status=CredentialAuthenticationStatus.INVALID_CREDENTIALS
@@ -76,7 +64,9 @@ class AuthenticationService:
         normalized_email = email.strip()
 
         try:
-            user = User.objects.get(email__iexact=normalized_email)
+            user = User.objects.get(
+                email__iexact=normalized_email
+            )
         except User.DoesNotExist:
             return CredentialAuthenticationResult(
                 status=CredentialAuthenticationStatus.INVALID_CREDENTIALS
@@ -100,16 +90,6 @@ class AuthenticationService:
 
     @classmethod
     def requires_two_factor(cls, user: User) -> bool:
-        """
-        Determina se a autenticação deve prosseguir para o segundo fator.
-
-        A implementação de 2FA ainda não existe.
-        Portanto, neste estágio, nenhum usuário exige segundo fator.
-
-        Este método existe como ponto explícito de extensão para a futura
-        política de autenticação multifator.
-        """
-
         return False
 
     @classmethod
@@ -122,23 +102,23 @@ class AuthenticationService:
         user_agent="",
         duration=None,
     ) -> AuthenticationResult:
-        """
-        Executa o fluxo completo de autenticação.
-
-        A sessão somente é criada quando a autenticação estiver concluída.
-        """
-
         credentials = cls.authenticate_credentials(
             email=email,
             password=password,
         )
 
-        if credentials.status == CredentialAuthenticationStatus.INVALID_CREDENTIALS:
+        if (
+            credentials.status
+            == CredentialAuthenticationStatus.INVALID_CREDENTIALS
+        ):
             return AuthenticationResult(
                 status=AuthenticationStatus.INVALID_CREDENTIALS
             )
 
-        if credentials.status == CredentialAuthenticationStatus.INACTIVE_USER:
+        if (
+            credentials.status
+            == CredentialAuthenticationStatus.INACTIVE_USER
+        ):
             return AuthenticationResult(
                 status=AuthenticationStatus.INACTIVE_USER,
                 user=credentials.user,
@@ -152,8 +132,74 @@ class AuthenticationService:
             )
 
         if cls.requires_two_factor(user):
+            challenge = (
+                AuthenticationChallengeService
+                .create_email_challenge(user)
+            )
+
             return AuthenticationResult(
                 status=AuthenticationStatus.TWO_FACTOR_REQUIRED,
+                user=user,
+                challenge_id=str(challenge.challenge.id),
+            )
+
+        session, token = SessionService.create_session(
+            user,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            duration=duration,
+        )
+
+        return AuthenticationResult(
+            status=AuthenticationStatus.AUTHENTICATED,
+            user=user,
+            session=session,
+            token=token,
+        )
+
+    @classmethod
+    def verify_two_factor(
+        cls,
+        challenge_id,
+        code: str,
+        *,
+        ip_address=None,
+        user_agent="",
+        duration=None,
+    ) -> AuthenticationResult:
+        challenge_result = (
+            AuthenticationChallengeService.verify(
+                challenge_id,
+                code,
+            )
+        )
+
+        if (
+            challenge_result.status
+            != AuthenticationChallengeStatus.VERIFIED
+        ):
+            return AuthenticationResult(
+                status=AuthenticationStatus.TWO_FACTOR_REQUIRED,
+                user=(
+                    challenge_result.challenge.user
+                    if challenge_result.challenge
+                    else None
+                ),
+                challenge_id=str(challenge_id),
+            )
+
+        challenge = challenge_result.challenge
+
+        if challenge is None:
+            return AuthenticationResult(
+                status=AuthenticationStatus.INVALID_CREDENTIALS
+            )
+
+        user = challenge.user
+
+        if not user.is_active:
+            return AuthenticationResult(
+                status=AuthenticationStatus.INACTIVE_USER,
                 user=user,
             )
 
@@ -173,6 +219,4 @@ class AuthenticationService:
 
     @classmethod
     def logout(cls, token: str) -> bool:
-        """Revoga a sessão associada ao token."""
-
         return SessionService.revoke_session(token)

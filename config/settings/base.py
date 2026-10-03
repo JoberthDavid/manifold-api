@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "apps.organizations",
     "apps.integrations",
     "apps.configuration",
+    "apps.communications",
 ]
 
 

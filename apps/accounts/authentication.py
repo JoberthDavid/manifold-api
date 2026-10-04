@@ -8,6 +8,9 @@ from .challenge import (
     AuthenticationChallengeService,
     AuthenticationChallengeStatus,
 )
+from apps.communications.services import EmailServiceFactory
+from .notifications import AuthenticationNotificationService
+
 
 class CredentialAuthenticationStatus(str, Enum):
     INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
@@ -29,6 +32,7 @@ class AuthenticationStatus(str, Enum):
     INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
     INACTIVE_USER = "INACTIVE_USER"
     TWO_FACTOR_REQUIRED = "TWO_FACTOR_REQUIRED"
+    EMAIL_DELIVERY_FAILED = "EMAIL_DELIVERY_FAILED"
     AUTHENTICATED = "AUTHENTICATED"
 
 
@@ -47,6 +51,10 @@ class AuthenticationResult:
     @property
     def requires_two_factor(self) -> bool:
         return self.status == AuthenticationStatus.TWO_FACTOR_REQUIRED
+
+@property
+def email_delivery_failed(self) -> bool:
+    return self.status == AuthenticationStatus.EMAIL_DELIVERY_FAILED
 
 
 class AuthenticationService:
@@ -107,18 +115,12 @@ class AuthenticationService:
             password=password,
         )
 
-        if (
-            credentials.status
-            == CredentialAuthenticationStatus.INVALID_CREDENTIALS
-        ):
+        if credentials.status == CredentialAuthenticationStatus.INVALID_CREDENTIALS:
             return AuthenticationResult(
-                status=AuthenticationStatus.INVALID_CREDENTIALS
+                status=AuthenticationStatus.INVALID_CREDENTIALS,
             )
 
-        if (
-            credentials.status
-            == CredentialAuthenticationStatus.INACTIVE_USER
-        ):
+        if credentials.status == CredentialAuthenticationStatus.INACTIVE_USER:
             return AuthenticationResult(
                 status=AuthenticationStatus.INACTIVE_USER,
                 user=credentials.user,
@@ -128,19 +130,40 @@ class AuthenticationService:
 
         if user is None:
             return AuthenticationResult(
-                status=AuthenticationStatus.INVALID_CREDENTIALS
+                status=AuthenticationStatus.INVALID_CREDENTIALS,
             )
 
         if cls.requires_two_factor(user):
-            challenge = (
-                AuthenticationChallengeService
-                .create_email_challenge(user)
+            challenge_creation = (
+                AuthenticationChallengeService.create_email_challenge(user)
             )
+
+            email_service = EmailServiceFactory.create()
+
+            notification_service = AuthenticationNotificationService(
+                email_service=email_service,
+            )
+
+            delivery_result = notification_service.send_authentication_code(
+                recipient=user.email,
+                verification_code=challenge_creation.verification_code,
+            )
+
+            if not delivery_result.is_sent:
+                AuthenticationChallengeService.revoke(
+                    challenge_creation.challenge,
+                )
+
+                return AuthenticationResult(
+                    status=AuthenticationStatus.EMAIL_DELIVERY_FAILED,
+                    user=user,
+                    challenge_id=str(challenge_creation.challenge.id),
+                )
 
             return AuthenticationResult(
                 status=AuthenticationStatus.TWO_FACTOR_REQUIRED,
                 user=user,
-                challenge_id=str(challenge.challenge.id),
+                challenge_id=str(challenge_creation.challenge.id),
             )
 
         session, token = SessionService.create_session(

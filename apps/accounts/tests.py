@@ -1,11 +1,16 @@
+import re
 from datetime import timedelta
+from unittest.mock import patch
 
+from django.db import IntegrityError
 from django.test import TestCase
 from django.utils import timezone
 
-from .models import Session, User, AuthenticationChallenge
-from .services import SessionService
-from django.db import IntegrityError
+from apps.communications.email import (
+    EmailDeliveryResult,
+    EmailDeliveryStatus,
+)
+
 from .authentication import (
     AuthenticationResult,
     AuthenticationService,
@@ -17,8 +22,8 @@ from .challenge import (
     AuthenticationChallengeService,
     AuthenticationChallengeStatus,
 )
-
-from unittest.mock import patch
+from .models import AuthenticationChallenge, Session, User
+from .services import SessionService
 
 
 class SessionServiceTests(TestCase):
@@ -708,4 +713,252 @@ class AuthenticationChallengeServiceTests(TestCase):
         self.assertEqual(
             second.status,
             AuthenticationChallengeStatus.VERIFIED,
+        )
+
+    @patch(
+        "apps.accounts.authentication.AuthenticationService.requires_two_factor",
+        return_value=True,
+    )
+    def test_login_with_two_factor_creates_challenge_and_sends_code(
+        self,
+        requires_two_factor,
+    ):
+        with patch(
+            "apps.accounts.authentication.EmailServiceFactory.create",
+        ) as create_email_service:
+            email_service = create_email_service.return_value
+
+            email_service.send.return_value = EmailDeliveryResult(
+                status=EmailDeliveryStatus.SENT,
+                message=None,
+            )
+
+            result = AuthenticationService.login(
+                "challenge@example.com",
+                "StrongPassword123!",
+            )
+
+        self.assertEqual(
+            result.status,
+            AuthenticationStatus.TWO_FACTOR_REQUIRED,
+        )
+
+        self.assertIsNotNone(result.challenge_id)
+        self.assertIsNone(result.session)
+        self.assertIsNone(result.token)
+
+        challenge = AuthenticationChallenge.objects.get(
+            pk=result.challenge_id,
+        )
+
+        self.assertEqual(challenge.attempts, 0)
+        self.assertIsNone(challenge.verified_at)
+        self.assertIsNone(challenge.revoked_at)
+
+        email_service.send.assert_called_once()
+
+        sent_message = email_service.send.call_args.args[0]
+
+        self.assertEqual(
+            sent_message.recipient,
+            self.user.email,
+        )
+
+        self.assertIn(
+            "Código de autenticação",
+            sent_message.subject,
+        )
+
+        self.assertNotEqual(
+            sent_message.body,
+            challenge.token_hash,
+        )
+
+    @patch(
+        "apps.accounts.authentication.AuthenticationService.requires_two_factor",
+        return_value=True,
+    )
+    def test_login_does_not_authenticate_when_email_delivery_fails(
+        self,
+        requires_two_factor,
+    ):
+        with patch(
+            "apps.accounts.authentication.EmailServiceFactory.create",
+        ) as create_email_service:
+            email_service = create_email_service.return_value
+
+            email_service.send.return_value = EmailDeliveryResult(
+                status=EmailDeliveryStatus.FAILED,
+                message=None,
+                error="SMTP connection failed",
+            )
+
+            result = AuthenticationService.login(
+                "challenge@example.com",
+                "StrongPassword123!",
+            )
+
+        self.assertEqual(
+            result.status,
+            AuthenticationStatus.EMAIL_DELIVERY_FAILED,
+        )
+
+        self.assertFalse(result.is_authenticated)
+        self.assertIsNone(result.session)
+        self.assertIsNone(result.token)
+
+        challenge = AuthenticationChallenge.objects.get(
+            pk=result.challenge_id,
+        )
+
+        self.assertIsNotNone(challenge.revoked_at)
+
+        self.assertEqual(
+            Session.objects.count(),
+            0,
+        )
+
+    @patch(
+        "apps.accounts.authentication.AuthenticationService.requires_two_factor",
+        return_value=True,
+    )
+    def test_correct_two_factor_code_creates_session(
+        self,
+        requires_two_factor,
+    ):
+        with patch(
+            "apps.accounts.authentication.EmailServiceFactory.create",
+        ) as create_email_service:
+            email_service = create_email_service.return_value
+
+            email_service.send.return_value = EmailDeliveryResult(
+                status=EmailDeliveryStatus.SENT,
+                message=None,
+            )
+
+            login_result = AuthenticationService.login(
+                "challenge@example.com",
+                "StrongPassword123!",
+            )
+
+        self.assertEqual(
+            login_result.status,
+            AuthenticationStatus.TWO_FACTOR_REQUIRED,
+        )
+
+        sent_message = email_service.send.call_args.args[0]
+
+        code_match = re.search(
+            r"\b\d{6}\b",
+            sent_message.body,
+        )
+
+        self.assertIsNotNone(code_match)
+
+        code = code_match.group()
+
+        self.assertEqual(
+            Session.objects.count(),
+            0,
+        )
+
+        verify_result = AuthenticationService.verify_two_factor(
+            login_result.challenge_id,
+            code,
+        )
+
+        self.assertEqual(
+            verify_result.status,
+            AuthenticationStatus.AUTHENTICATED,
+        )
+
+        self.assertTrue(
+            verify_result.is_authenticated,
+        )
+
+        self.assertIsNotNone(
+            verify_result.session,
+        )
+
+        self.assertIsNotNone(
+            verify_result.token,
+        )
+
+        self.assertEqual(
+            Session.objects.count(),
+            1,
+        )
+
+    @patch(
+        "apps.accounts.authentication.AuthenticationService.requires_two_factor",
+        return_value=True,
+    )
+    def test_incorrect_two_factor_code_respects_attempt_limit(
+        self,
+        requires_two_factor,
+    ):
+        with patch(
+            "apps.accounts.authentication.EmailServiceFactory.create",
+        ) as create_email_service:
+            email_service = create_email_service.return_value
+
+            email_service.send.return_value = EmailDeliveryResult(
+                status=EmailDeliveryStatus.SENT,
+                message=None,
+            )
+
+            login_result = AuthenticationService.login(
+                "challenge@example.com",
+                "StrongPassword123!",
+            )
+
+        challenge_id = login_result.challenge_id
+
+        self.assertIsNotNone(challenge_id)
+
+        for attempt in range(4):
+            result = AuthenticationService.verify_two_factor(
+                challenge_id,
+                "000000",
+            )
+
+            self.assertEqual(
+                result.status,
+                AuthenticationStatus.TWO_FACTOR_REQUIRED,
+            )
+
+            self.assertIsNone(
+                result.session,
+            )
+
+        result = AuthenticationService.verify_two_factor(
+            challenge_id,
+            "000000",
+        )
+
+        self.assertEqual(
+            result.status,
+            AuthenticationStatus.TWO_FACTOR_REQUIRED,
+        )
+
+        self.assertIsNone(
+            result.session,
+        )
+
+        challenge = AuthenticationChallenge.objects.get(
+            pk=challenge_id,
+        )
+
+        self.assertEqual(
+            challenge.attempts,
+            challenge.max_attempts,
+        )
+
+        self.assertIsNotNone(
+            challenge.revoked_at,
+        )
+
+        self.assertEqual(
+            Session.objects.count(),
+            0,
         )

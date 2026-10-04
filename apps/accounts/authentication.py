@@ -1,15 +1,18 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from .challenge import AuthenticationChallengeService
-from .models import Session, User
-from .services import SessionService
+from django.db import transaction
+from django.utils import timezone
+
+from apps.communications.services import EmailServiceFactory
+
 from .challenge import (
     AuthenticationChallengeService,
     AuthenticationChallengeStatus,
 )
-from apps.communications.services import EmailServiceFactory
+from .models import Session, User
 from .notifications import AuthenticationNotificationService
+from .services import SessionService
 
 
 class CredentialAuthenticationStatus(str, Enum):
@@ -31,8 +34,15 @@ class CredentialAuthenticationResult:
 class AuthenticationStatus(str, Enum):
     INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
     INACTIVE_USER = "INACTIVE_USER"
+
     TWO_FACTOR_REQUIRED = "TWO_FACTOR_REQUIRED"
+    TWO_FACTOR_INVALID_CODE = "TWO_FACTOR_INVALID_CODE"
+    TWO_FACTOR_EXPIRED = "TWO_FACTOR_EXPIRED"
+    TWO_FACTOR_EXHAUSTED = "TWO_FACTOR_EXHAUSTED"
+    TWO_FACTOR_REVOKED = "TWO_FACTOR_REVOKED"
+
     EMAIL_DELIVERY_FAILED = "EMAIL_DELIVERY_FAILED"
+
     AUTHENTICATED = "AUTHENTICATED"
 
 
@@ -43,6 +53,7 @@ class AuthenticationResult:
     session: Session | None = None
     token: str | None = None
     challenge_id: str | None = None
+    attempts_remaining: int | None = None
 
     @property
     def is_authenticated(self) -> bool:
@@ -52,9 +63,9 @@ class AuthenticationResult:
     def requires_two_factor(self) -> bool:
         return self.status == AuthenticationStatus.TWO_FACTOR_REQUIRED
 
-@property
-def email_delivery_failed(self) -> bool:
-    return self.status == AuthenticationStatus.EMAIL_DELIVERY_FAILED
+    @property
+    def email_delivery_failed(self) -> bool:
+        return self.status == AuthenticationStatus.EMAIL_DELIVERY_FAILED
 
 
 class AuthenticationService:
@@ -66,18 +77,16 @@ class AuthenticationService:
     ) -> CredentialAuthenticationResult:
         if not email or not password:
             return CredentialAuthenticationResult(
-                status=CredentialAuthenticationStatus.INVALID_CREDENTIALS
+                status=CredentialAuthenticationStatus.INVALID_CREDENTIALS,
             )
 
         normalized_email = email.strip()
 
         try:
-            user = User.objects.get(
-                email__iexact=normalized_email
-            )
+            user = User.objects.get(email__iexact=normalized_email)
         except User.DoesNotExist:
             return CredentialAuthenticationResult(
-                status=CredentialAuthenticationStatus.INVALID_CREDENTIALS
+                status=CredentialAuthenticationStatus.INVALID_CREDENTIALS,
             )
 
         if not user.is_active:
@@ -88,7 +97,7 @@ class AuthenticationService:
 
         if not user.check_password(password):
             return CredentialAuthenticationResult(
-                status=CredentialAuthenticationStatus.INVALID_CREDENTIALS
+                status=CredentialAuthenticationStatus.INVALID_CREDENTIALS,
             )
 
         return CredentialAuthenticationResult(
@@ -181,6 +190,7 @@ class AuthenticationService:
         )
 
     @classmethod
+    @transaction.atomic
     def verify_two_factor(
         cls,
         challenge_id,
@@ -190,32 +200,70 @@ class AuthenticationService:
         user_agent="",
         duration=None,
     ) -> AuthenticationResult:
-        challenge_result = (
-            AuthenticationChallengeService.verify(
-                challenge_id,
-                code,
-            )
+        challenge_result = AuthenticationChallengeService.verify(
+            challenge_id,
+            code,
         )
 
-        if (
-            challenge_result.status
-            != AuthenticationChallengeStatus.VERIFIED
-        ):
+        status = challenge_result.status
+        challenge = challenge_result.challenge
+
+        if status == AuthenticationChallengeStatus.ACTIVE:
+            attempts_remaining = None
+
+            if challenge is not None:
+                attempts_remaining = max(
+                    challenge.max_attempts - challenge.attempts,
+                    0,
+                )
+
             return AuthenticationResult(
-                status=AuthenticationStatus.TWO_FACTOR_REQUIRED,
-                user=(
-                    challenge_result.challenge.user
-                    if challenge_result.challenge
-                    else None
-                ),
+                status=AuthenticationStatus.TWO_FACTOR_INVALID_CODE,
+                user=challenge.user if challenge else None,
+                challenge_id=str(challenge_id),
+                attempts_remaining=attempts_remaining,
+            )
+
+        if status == AuthenticationChallengeStatus.EXPIRED:
+            return AuthenticationResult(
+                status=AuthenticationStatus.TWO_FACTOR_EXPIRED,
+                user=challenge.user if challenge else None,
                 challenge_id=str(challenge_id),
             )
 
-        challenge = challenge_result.challenge
+        if status == AuthenticationChallengeStatus.EXHAUSTED:
+            return AuthenticationResult(
+                status=AuthenticationStatus.TWO_FACTOR_EXHAUSTED,
+                user=challenge.user if challenge else None,
+                challenge_id=str(challenge_id),
+                attempts_remaining=0,
+            )
+
+        if status == AuthenticationChallengeStatus.REVOKED:
+            return AuthenticationResult(
+                status=AuthenticationStatus.TWO_FACTOR_REVOKED,
+                user=challenge.user if challenge else None,
+                challenge_id=str(challenge_id),
+            )
+
+        if status != AuthenticationChallengeStatus.VERIFIED:
+            return AuthenticationResult(
+                status=AuthenticationStatus.TWO_FACTOR_REVOKED,
+                user=challenge.user if challenge else None,
+                challenge_id=str(challenge_id),
+            )
 
         if challenge is None:
             return AuthenticationResult(
-                status=AuthenticationStatus.INVALID_CREDENTIALS
+                status=AuthenticationStatus.TWO_FACTOR_REVOKED,
+                challenge_id=str(challenge_id),
+            )
+
+        if challenge.consumed_at is not None:
+            return AuthenticationResult(
+                status=AuthenticationStatus.TWO_FACTOR_REVOKED,
+                user=challenge.user,
+                challenge_id=str(challenge_id),
             )
 
         user = challenge.user
@@ -224,7 +272,13 @@ class AuthenticationService:
             return AuthenticationResult(
                 status=AuthenticationStatus.INACTIVE_USER,
                 user=user,
+                challenge_id=str(challenge_id),
             )
+
+        challenge.consumed_at = timezone.now()
+        challenge.save(
+            update_fields=("consumed_at",)
+        )
 
         session, token = SessionService.create_session(
             user,
@@ -238,6 +292,7 @@ class AuthenticationService:
             user=user,
             session=session,
             token=token,
+            challenge_id=str(challenge_id),
         )
 
     @classmethod

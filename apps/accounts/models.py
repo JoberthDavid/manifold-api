@@ -204,6 +204,11 @@ class AuthenticationChallenge(models.Model):
         blank=True,
         verbose_name="data de validação",
     )
+    consumed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="data de consumo",
+    )
     revoked_at = models.DateTimeField(
         null=True,
         blank=True,

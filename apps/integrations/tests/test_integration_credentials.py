@@ -9,9 +9,11 @@ from apps.integrations.models import (
     CredentialType,
     Integration,
 )
+from apps.integrations.services.api_key_fingerprint import ApiKeyFingerprintService
 from apps.integrations.services.integration_credentials import (
     IntegrationCredentialService,
 )
+import hashlib
 
 
 TEST_ENCRYPTION_KEY = Fernet.generate_key().decode()
@@ -140,3 +142,166 @@ class IntegrationCredentialServiceTests(TestCase):
         credential.refresh_from_db()
 
         self.assertTrue(credential.enabled)
+
+    def test_create_generates_fingerprint(self):
+        credential = IntegrationCredentialService.create(
+            integration=self.integration,
+            name="composition-engine",
+            credential_type=CredentialType.API_KEY,
+            secret="a" * 64,
+        )
+
+        self.assertEqual(
+            credential.fingerprint,
+            ApiKeyFingerprintService.generate("a" * 64),
+        )
+
+    def test_create_does_not_store_plain_secret(self):
+        secret = "a" * 64
+
+        credential = IntegrationCredentialService.create(
+            integration=self.integration,
+            name="composition-engine",
+            credential_type=CredentialType.API_KEY,
+            secret=secret,
+        )
+
+        self.assertNotEqual(
+            credential.encrypted_value,
+            secret,
+        )
+
+        self.assertNotEqual(
+            credential.fingerprint,
+            secret,
+        )
+
+    def test_same_secret_generates_same_fingerprint(self):
+        secret = "a" * 64
+
+        first = ApiKeyFingerprintService.generate(secret)
+        second = ApiKeyFingerprintService.generate(secret)
+
+        self.assertEqual(first, second)
+
+    def test_different_secrets_generate_different_fingerprints(self):
+        first = ApiKeyFingerprintService.generate("a" * 64)
+        second = ApiKeyFingerprintService.generate("b" * 64)
+
+        self.assertNotEqual(first, second)
+
+    def test_update_secret_updates_fingerprint(self):
+        old_secret = "a" * 64
+        new_secret = "b" * 64
+
+        credential = IntegrationCredentialService.create(
+            integration=self.integration,
+            name="composition-engine",
+            credential_type=CredentialType.API_KEY,
+            secret=old_secret,
+        )
+
+        IntegrationCredentialService.update_secret(
+            credential,
+            new_secret,
+        )
+
+        credential.refresh_from_db()
+
+        self.assertEqual(
+            credential.fingerprint,
+            ApiKeyFingerprintService.generate(new_secret),
+        )
+
+    def test_create_generates_credential_fingerprint(self):
+        secret = "super-secret-api-key"
+
+        credential = IntegrationCredentialService.create(
+            integration=self.integration,
+            name="Composition Engine",
+            credential_type=CredentialType.API_KEY,
+            secret=secret,
+        )
+
+        expected_fingerprint = hashlib.sha256(
+            secret.encode("utf-8")
+        ).hexdigest()
+
+        self.assertEqual(
+            credential.fingerprint,
+            expected_fingerprint,
+        )
+
+    def test_create_does_not_store_secret_in_plaintext(self):
+        secret = "super-secret-api-key"
+
+        credential = IntegrationCredentialService.create(
+            integration=self.integration,
+            name="Composition Engine",
+            credential_type=CredentialType.API_KEY,
+            secret=secret,
+        )
+
+        self.assertNotEqual(
+            credential.encrypted_value,
+            secret,
+        )
+
+        self.assertNotIn(
+            secret,
+            credential.encrypted_value,
+        )
+
+    def test_get_secret_returns_original_secret(self):
+        secret = "super-secret-api-key"
+
+        credential = IntegrationCredentialService.create(
+            integration=self.integration,
+            name="Composition Engine",
+            credential_type=CredentialType.API_KEY,
+            secret=secret,
+        )
+
+        self.assertEqual(
+            IntegrationCredentialService.get_secret(credential),
+            secret,
+        )
+
+    def test_update_secret_updates_fingerprint(self):
+        old_secret = "old-secret"
+        new_secret = "new-secret"
+
+        credential = IntegrationCredentialService.create(
+            integration=self.integration,
+            name="Composition Engine",
+            credential_type=CredentialType.API_KEY,
+            secret=old_secret,
+        )
+
+        old_fingerprint = credential.fingerprint
+
+        IntegrationCredentialService.update_secret(
+            credential,
+            new_secret,
+        )
+
+        credential.refresh_from_db()
+
+        expected_fingerprint = hashlib.sha256(
+            new_secret.encode("utf-8")
+        ).hexdigest()
+
+        self.assertNotEqual(
+            credential.fingerprint,
+            old_fingerprint,
+        )
+
+        self.assertEqual(
+            credential.fingerprint,
+            expected_fingerprint,
+        )
+
+        self.assertEqual(
+            IntegrationCredentialService.get_secret(credential),
+            new_secret,
+        )

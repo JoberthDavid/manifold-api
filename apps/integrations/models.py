@@ -90,6 +90,12 @@ class IntegrationCredential(models.Model):
     encrypted_value = models.TextField(
         verbose_name="valor criptografado",
     )
+    fingerprint = models.CharField(
+        max_length=64,
+        unique=True,
+        verbose_name="fingerprint",
+        help_text="Identificador SHA-256 da credencial.",
+    )
     enabled = models.BooleanField(
         default=True,
         verbose_name="ativa",

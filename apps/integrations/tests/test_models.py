@@ -6,6 +6,9 @@ from apps.integrations.models import (
     IntegrationCredential,
     IntegrationType,
 )
+from apps.integrations.services.api_key_fingerprint import (
+    ApiKeyFingerprintService,
+)
 
 
 class IntegrationModelTests(TestCase):
@@ -63,18 +66,23 @@ class IntegrationModelTests(TestCase):
             base_url="https://example.com",
         )
 
+        secret_1 = "secret-1"
+        secret_2 = "secret-2"
+
         IntegrationCredential.objects.create(
             integration=integration,
-            name="Chave principal",
+            name="Credencial 1",
             credential_type=CredentialType.API_KEY,
-            encrypted_value="encrypted-primary",
+            encrypted_value="encrypted-secret-1",
+            fingerprint=ApiKeyFingerprintService.generate(secret_1),
         )
 
         IntegrationCredential.objects.create(
             integration=integration,
-            name="Chave de homologação",
+            name="Credencial 2",
             credential_type=CredentialType.API_KEY,
-            encrypted_value="encrypted-staging",
+            encrypted_value="encrypted-secret-2",
+            fingerprint=ApiKeyFingerprintService.generate(secret_2),
         )
 
         self.assertEqual(integration.credentials.count(), 2)

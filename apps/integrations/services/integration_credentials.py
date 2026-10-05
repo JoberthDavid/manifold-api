@@ -9,6 +9,9 @@ from apps.integrations.models import (
 from apps.integrations.services.credentials import (
     CredentialEncryptionService,
 )
+from apps.integrations.services.api_key_fingerprint import (
+    ApiKeyFingerprintService,
+)
 
 
 class IntegrationCredentialService:
@@ -18,12 +21,12 @@ class IntegrationCredentialService:
     def create(
         cls,
         *,
-        integration: Integration,
-        name: str,
-        credential_type: str,
-        secret: str,
+        integration,
+        name,
+        credential_type,
+        secret,
         expires_at=None,
-    ) -> IntegrationCredential:
+    ):
         if not isinstance(integration, Integration):
             raise IntegrationCredentialError(
                 "A integração informada é inválida."
@@ -31,26 +34,27 @@ class IntegrationCredentialService:
 
         if not name or not name.strip():
             raise IntegrationCredentialError(
-                "O nome da credencial não pode ser vazio."
+                "O nome da credencial é obrigatório."
             )
 
         valid_credential_types = {
-            choice
-            for choice, _ in CredentialType.choices
+            choice for choice, _ in CredentialType.choices
         }
 
         if credential_type not in valid_credential_types:
             raise IntegrationCredentialError(
-                "O tipo da credencial é inválido."
+                "O tipo de credencial informado é inválido."
             )
 
         encrypted_value = CredentialEncryptionService.encrypt(secret)
+        fingerprint = ApiKeyFingerprintService.generate(secret)
 
         return IntegrationCredential.objects.create(
             integration=integration,
             name=name.strip(),
             credential_type=credential_type,
             encrypted_value=encrypted_value,
+            fingerprint=fingerprint,
             expires_at=expires_at,
         )
 
@@ -84,26 +88,35 @@ class IntegrationCredentialService:
     @classmethod
     def update_secret(
         cls,
-        credential: IntegrationCredential,
-        secret: str,
+        credential,
+        secret,
         *,
         expires_at=None,
-    ) -> IntegrationCredential:
+    ):
         if not isinstance(credential, IntegrationCredential):
             raise IntegrationCredentialError(
                 "A credencial informada é inválida."
             )
 
-        credential.encrypted_value = (
-            CredentialEncryptionService.encrypt(secret)
-        )
+        if not secret:
+            raise IntegrationCredentialError(
+                "O segredo da credencial não pode ser vazio."
+            )
+
+        encrypted_value = CredentialEncryptionService.encrypt(secret)
+        fingerprint = ApiKeyFingerprintService.generate(secret)
+
+        credential.encrypted_value = encrypted_value
+        credential.fingerprint = fingerprint
         credential.expires_at = expires_at
+
         credential.save(
-            update_fields=(
+            update_fields=[
                 "encrypted_value",
+                "fingerprint",
                 "expires_at",
                 "updated_at",
-            )
+            ]
         )
 
         return credential

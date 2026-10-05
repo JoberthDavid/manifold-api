@@ -1,0 +1,15 @@
+{% extends "admin/change_form.html" %}
+
+{% block object-tools-items %}
+    {% if original %}
+        <li>
+            <a
+                href="{% url 'admin:integrations_integration_credential_add' original.id %}"
+            >
+                Adicionar credencial
+            </a>
+        </li>
+    {% endif %}
+
+    {{ block.super }}
+{% endblock %}

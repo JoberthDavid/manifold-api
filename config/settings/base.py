@@ -183,3 +183,33 @@ EMAIL_TIMEOUT = int(
         "10",
     )
 )
+
+MANIFOLD_CREDENTIAL_ENCRYPTION_KEY = os.environ.get(
+    "MANIFOLD_CREDENTIAL_ENCRYPTION_KEY",
+    "",
+)
+
+RAILWAY_API_URL = os.environ.get(
+    "RAILWAY_API_URL",
+    "",
+)
+
+RAILWAY_API_TOKEN = os.environ.get(
+    "RAILWAY_API_TOKEN",
+    "",
+)
+
+RAILWAY_PROJECT_ID = os.environ.get(
+    "RAILWAY_PROJECT_ID",
+    "",
+)
+
+RAILWAY_ENVIRONMENT_ID = os.environ.get(
+    "RAILWAY_ENVIRONMENT_ID",
+    "",
+)
+
+RAILWAY_SERVICE_ID = os.environ.get(
+    "RAILWAY_SERVICE_ID",
+    "",
+)

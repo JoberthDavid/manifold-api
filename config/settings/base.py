@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "apps.integrations",
     "apps.configuration",
     "apps.communications",
+    "apps.security",
 ]
 
 
@@ -212,4 +213,14 @@ RAILWAY_ENVIRONMENT_ID = os.environ.get(
 RAILWAY_SERVICE_ID = os.environ.get(
     "RAILWAY_SERVICE_ID",
     "",
+)
+
+MANIFOLD_JWT_KEY_ENCRYPTION_KEY = os.environ.get(
+    "MANIFOLD_JWT_KEY_ENCRYPTION_KEY",
+    "",
+)
+
+MANIFOLD_JWKS_URL = os.environ.get(
+    "MANIFOLD_JWKS_URL",
+    "http://127.0.0.1:8000/.well-known/jwks.json",
 )

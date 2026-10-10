@@ -1,0 +1,125 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+
+<div id="content-main">
+
+    <h1>Token de acesso gerado</h1>
+
+    <div class="module aligned">
+
+        <h2>
+            Credencial criada com sucesso
+        </h2>
+
+        <div class="form-row">
+            <div>
+                <p>
+                    <strong>Serviço:</strong>
+                    {{ credential.service.name }}
+                </p>
+
+                <p>
+                    <strong>Credencial:</strong>
+                    {{ credential.name }}
+                </p>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div style="width: 100%;">
+
+                <label for="generated-token">
+                    Token de acesso
+                </label>
+
+                <textarea
+                    id="generated-token"
+                    readonly
+                    rows="4"
+                    style="
+                        width: 100%;
+                        box-sizing: border-box;
+                        font-family: monospace;
+                        font-size: 14px;
+                        padding: 10px;
+                        margin-top: 8px;
+                    "
+                >{{ token }}</textarea>
+
+            </div>
+        </div>
+
+        <div style="margin-top: 15px;">
+
+            <button
+                type="button"
+                class="button"
+                id="copy-token-button"
+            >
+                Copiar token
+            </button>
+
+        </div>
+
+        <div
+            class="messagelist"
+            style="margin-top: 20px;"
+        >
+            <div class="warning">
+                <strong>Atenção:</strong>
+                este token será exibido somente agora.
+                O sistema não armazena o token original e ele
+                não poderá ser recuperado posteriormente.
+            </div>
+        </div>
+
+        <div style="margin-top: 30px;">
+
+            <a
+                href="{% url 'admin:security_servicecredential_change' credential.pk %}"
+                class="button"
+            >
+                Concluir
+            </a>
+
+            <a
+                href="{% url 'admin:security_servicecredential_changelist' %}"
+                class="button"
+                style="margin-left: 5px;"
+            >
+                Voltar para credenciais
+            </a>
+
+        </div>
+
+    </div>
+
+</div>
+
+<script>
+(function () {
+    const tokenField = document.getElementById("generated-token");
+    const copyButton = document.getElementById("copy-token-button");
+
+    copyButton.addEventListener("click", async function () {
+        try {
+            await navigator.clipboard.writeText(tokenField.value);
+
+            copyButton.textContent = "Token copiado";
+
+            setTimeout(function () {
+                copyButton.textContent = "Copiar token";
+            }, 2000);
+
+        } catch (error) {
+            tokenField.focus();
+            tokenField.select();
+
+            copyButton.textContent = "Selecione e copie o token";
+        }
+    });
+})();
+</script>
+
+{% endblock %}

@@ -25,7 +25,6 @@ class SicroClientTests(TestCase):
 
     def setUp(self):
         self.integration = Integration.objects.create(
-            code="SICRO",
             name="SICRO",
             base_url="https://sicro.example.com",
             enabled=True,

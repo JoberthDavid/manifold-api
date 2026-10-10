@@ -5,6 +5,7 @@ from apps.integrations.admin_views import create_credential
 from apps.integrations.models import (
     Integration,
     IntegrationCredential,
+    IntegrationOperation,
 )
 
 
@@ -32,28 +33,51 @@ class IntegrationCredentialInline(admin.TabularInline):
         return False
 
 
+class IntegrationOperationInline(admin.TabularInline):
+    model = IntegrationOperation
+    extra = 0
+
+    fields = (
+        "name",
+        "slug",
+        "http_method",
+        "path",
+        "request_schema",
+        "enabled",
+    )
+
+    readonly_fields = (
+        "slug",
+    )
+
+    show_change_link = True
+
+
 @admin.register(Integration)
 class IntegrationAdmin(admin.ModelAdmin):
     list_display = (
-        "code",
         "name",
+        "slug",
         "integration_type",
+        "authentication_type",
         "base_url",
         "enabled",
         "timeout",
     )
 
     search_fields = (
-        "code",
         "name",
+        "slug",
     )
 
     list_filter = (
         "integration_type",
+        "authentication_type",
         "enabled",
     )
 
     inlines = (
+        IntegrationOperationInline,
         IntegrationCredentialInline,
     )
 
@@ -75,6 +99,35 @@ class IntegrationAdmin(admin.ModelAdmin):
         return custom_urls + urls
 
 
+@admin.register(IntegrationOperation)
+class IntegrationOperationAdmin(admin.ModelAdmin):
+    list_display = (
+        "name",
+        "slug",
+        "integration",
+        "http_method",
+        "path",
+        "enabled",
+    )
+
+    list_filter = (
+        "integration",
+        "http_method",
+        "enabled",
+    )
+
+    search_fields = (
+        "name",
+        "slug",
+        "integration__name",
+        "integration__slug",
+    )
+
+    readonly_fields = (
+        "slug",
+    )
+
+
 @admin.register(IntegrationCredential)
 class IntegrationCredentialAdmin(admin.ModelAdmin):
     list_display = (
@@ -91,8 +144,8 @@ class IntegrationCredentialAdmin(admin.ModelAdmin):
     )
 
     search_fields = (
-        "integration__code",
         "integration__name",
+        "integration__slug",
         "name",
     )
 

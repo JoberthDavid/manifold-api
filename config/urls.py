@@ -13,4 +13,8 @@ urlpatterns = [
         "",
         include("apps.security.urls"),
     ),
+    path(
+        "api/integrations/",
+        include("apps.integrations.api.urls"),
+    ),
 ]

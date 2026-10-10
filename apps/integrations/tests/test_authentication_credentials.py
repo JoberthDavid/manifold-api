@@ -72,7 +72,6 @@ class IntegrationAuthenticationCredentialsTests(TestCase):
                 "credential": credential.name,
                 "header": "X-API-Key",
             },
-            parameters={},
         )
 
         self.assertEqual(
@@ -95,7 +94,6 @@ class IntegrationAuthenticationCredentialsTests(TestCase):
                 "credential": "Production",
                 "header": "X-API-Key",
             },
-            parameters={},
         )
 
         self.assertEqual(
@@ -110,7 +108,6 @@ class IntegrationAuthenticationCredentialsTests(TestCase):
                     "credential": "Production",
                     "header": "X-API-Key",
                 },
-                parameters={},
             )
 
     def test_resolver_rejects_disabled_credential(self):
@@ -129,7 +126,6 @@ class IntegrationAuthenticationCredentialsTests(TestCase):
                     "credential": credential.name,
                     "header": "X-API-Key",
                 },
-                parameters={},
             )
 
     def test_resolver_rejects_expired_credential(self):
@@ -147,7 +143,6 @@ class IntegrationAuthenticationCredentialsTests(TestCase):
                     "credential": "Production",
                     "header": "X-API-Key",
                 },
-                parameters={},
             )
 
     def test_credential_must_belong_to_integration(self):
@@ -170,7 +165,6 @@ class IntegrationAuthenticationCredentialsTests(TestCase):
                     "credential": "Production",
                     "header": "X-API-Key",
                 },
-                parameters={},
             )
 
     def test_credential_type_must_match_authentication_type(self):
@@ -186,7 +180,6 @@ class IntegrationAuthenticationCredentialsTests(TestCase):
                 authentication_config={
                     "credential": "Production",
                 },
-                parameters={},
             )
 
     def test_bearer_token_uses_stored_credential(self):
@@ -208,7 +201,6 @@ class IntegrationAuthenticationCredentialsTests(TestCase):
             authentication_config={
                 "credential": "Production",
             },
-            parameters={},
         )
 
         self.assertEqual(
@@ -237,7 +229,6 @@ class IntegrationAuthenticationCredentialsTests(TestCase):
             authentication_config={
                 "credential": "Production",
             },
-            parameters={},
         )
 
         self.assertEqual(

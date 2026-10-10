@@ -34,9 +34,7 @@ INSTALLED_APPS = [
     "rest_framework",
 
     "apps.accounts",
-    "apps.organizations",
     "apps.integrations",
-    "apps.configuration",
     "apps.communications",
     "apps.security",
 ]

@@ -4,17 +4,19 @@ from rest_framework.views import APIView
 
 from apps.integrations.gateway import IntegrationGateway
 from apps.integrations.models import Integration, IntegrationOperation
-from apps.security.api.authentication import ServiceCredentialAuthentication
-from apps.security.api.permissions import IsServiceAuthenticated
-from apps.security.models import TechnicalEndpoint
-from apps.security.services.technical_endpoint_authorization import (
-    TechnicalEndpointAuthorizationService,
+from apps.integrations.api.authentication import IntegrationRequestAuthentication
+from apps.integrations.api.permissions import IsIntegrationConsumerAuthenticated
+from apps.security.services.technical_endpoint_authorization import TechnicalEndpointAuthorizationService
+from apps.accounts.models import User
+from apps.security.models import (
+    ServiceCredential,
+    TechnicalEndpoint,
 )
 
 
 class IntegrationExecuteView(APIView):
-    authentication_classes = (ServiceCredentialAuthentication,)
-    permission_classes = (IsServiceAuthenticated,)
+    authentication_classes = (IntegrationRequestAuthentication,)
+    permission_classes = (IsIntegrationConsumerAuthenticated,)
 
     def get(self, request, integration_slug, operation_slug):
         return self._execute(
@@ -58,25 +60,44 @@ class IntegrationExecuteView(APIView):
             )
 
         # ---------------------------------------------------------
-        # 3. A autenticação já garantiu que request.user é um
-        #    ServiceCredential válido.
+        # 3. Autoriza o consumidor conforme o tipo de credencial.
         # ---------------------------------------------------------
-        service = request.user.service
+        if isinstance(request.user, ServiceCredential):
+            service = request.user.service
 
-        # ---------------------------------------------------------
-        # 4. Verifica autorização do serviço para o endpoint.
-        # ---------------------------------------------------------
-        if not TechnicalEndpointAuthorizationService.is_authorized(
-            service=service,
-            endpoint=endpoint,
-        ):
+            if not TechnicalEndpointAuthorizationService.is_authorized(
+                service=service,
+                endpoint=endpoint,
+            ):
+                return Response(
+                    {
+                        "detail": (
+                            "O serviço não está autorizado a acessar "
+                            "este endpoint."
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            subject = f"service:{service.id}"
+
+        elif isinstance(request.user, User):
+            if not request.user.is_superuser:
+                return Response(
+                    {
+                        "detail": (
+                            "O usuário não está autorizado a acessar "
+                            "este endpoint."
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            subject = f"user:{request.user.id}"
+
+        else:
             return Response(
-                {
-                    "detail": (
-                        "O serviço não está autorizado a acessar "
-                        "este endpoint."
-                    )
-                },
+                {"detail": "Consumidor não autorizado."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -124,7 +145,7 @@ class IntegrationExecuteView(APIView):
             result = IntegrationGateway(integration).execute(
                 operation=operation,
                 parameters=parameters,
-                subject=f"service:{service.id}",
+                subject=subject,
             )
         except Exception as exc:
             return Response(

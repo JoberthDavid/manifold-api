@@ -32,6 +32,27 @@ class IntegrationExecuteView(APIView):
             operation_slug=operation_slug,
         )
 
+    def put(self, request, integration_slug, operation_slug):
+        return self._execute(
+            request=request,
+            integration_slug=integration_slug,
+            operation_slug=operation_slug,
+        )
+
+    def patch(self, request, integration_slug, operation_slug):
+        return self._execute(
+            request=request,
+            integration_slug=integration_slug,
+            operation_slug=operation_slug,
+        )
+
+    def delete(self, request, integration_slug, operation_slug):
+        return self._execute(
+            request=request,
+            integration_slug=integration_slug,
+            operation_slug=operation_slug,
+        )
+
     def _execute(self, *, request, integration_slug, operation_slug):
         # ---------------------------------------------------------
         # 1. Resolve o endpoint técnico pelo método + caminho.
@@ -140,6 +161,18 @@ class IntegrationExecuteView(APIView):
 
         elif request.method == "POST":
             parameters = request.data
+
+        elif request.method in ("PUT", "PATCH"):
+            parameters = request.data.copy()
+            parameters.update(request.query_params.dict())
+
+        elif request.method == "DELETE":
+            parameters = {}
+
+            if isinstance(request.data, dict):
+                parameters.update(request.data)
+
+            parameters.update(request.query_params.dict())
 
         try:
             result = IntegrationGateway(integration).execute(

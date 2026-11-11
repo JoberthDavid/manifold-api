@@ -193,3 +193,195 @@ class IntegrationExecuteApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         mock_execute.assert_not_called()
+
+    def _create_http_operation(self, http_method, name):
+        operation = IntegrationOperation.objects.create(
+            integration=self.integration,
+            name=name,
+            http_method=http_method,
+            path="/itens/{item_id}/",
+            request_schema={
+                "body": {
+                    "name": "name",
+                },
+            } if http_method in ("PUT", "PATCH") else {},
+        )
+
+        endpoint = TechnicalEndpoint.objects.create(
+            name=f"Endpoint {name}",
+            http_method=http_method,
+            path=(
+                "/api/integrations/"
+                f"{self.integration.slug}/"
+                f"{operation.slug}/"
+            ),
+        )
+
+        ServiceTechnicalEndpoint.objects.create(
+            service=self.service,
+            endpoint=endpoint,
+        )
+
+        return operation, (
+            "/api/integrations/"
+            f"{self.integration.slug}/"
+            f"{operation.slug}/"
+        )
+
+    @patch("apps.integrations.api.views.IntegrationGateway.execute")
+    def test_authorized_service_can_execute_put(
+        self,
+        mock_execute,
+    ):
+        mock_execute.return_value = {"id": 10, "name": "Atualizado"}
+
+        _, url = self._create_http_operation("PUT", "Atualizar item")
+
+        self.authenticate()
+
+        response = self.client.put(
+            url,
+            {
+                "item_id": "10",
+                "name": "Atualizado",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data,
+            {"id": 10, "name": "Atualizado"},
+        )
+
+        mock_execute.assert_called_once()
+        self.assertEqual(
+            mock_execute.call_args.kwargs["parameters"],
+            {
+                "item_id": "10",
+                "name": "Atualizado",
+            },
+        )
+
+    @patch("apps.integrations.api.views.IntegrationGateway.execute")
+    def test_authorized_service_can_execute_patch(
+        self,
+        mock_execute,
+    ):
+        mock_execute.return_value = {"id": 10, "name": "Parcial"}
+
+        _, url = self._create_http_operation("PATCH", "Alterar parcialmente")
+
+        self.authenticate()
+
+        response = self.client.patch(
+            url,
+            {
+                "item_id": "10",
+                "name": "Parcial",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        mock_execute.assert_called_once()
+        self.assertEqual(
+            mock_execute.call_args.kwargs["parameters"],
+            {
+                "item_id": "10",
+                "name": "Parcial",
+            },
+        )
+
+    @patch("apps.integrations.api.views.IntegrationGateway.execute")
+    def test_authorized_service_can_execute_delete(
+        self,
+        mock_execute,
+    ):
+        mock_execute.return_value = None
+
+        _, url = self._create_http_operation("DELETE", "Excluir item")
+
+        self.authenticate()
+
+        response = self.client.delete(
+            url,
+            {"item_id": "10"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data)
+
+        mock_execute.assert_called_once()
+        self.assertEqual(
+            mock_execute.call_args.kwargs["parameters"],
+            {
+                "item_id": "10",
+            },
+        )
+
+    @patch("apps.integrations.api.views.IntegrationGateway.execute")
+    def test_put_merges_query_parameters_and_body(
+        self,
+        mock_execute,
+    ):
+        mock_execute.return_value = {"id": 15}
+
+        _, url = self._create_http_operation(
+            "PUT",
+            "Atualizar item com query",
+        )
+
+        self.authenticate()
+
+        response = self.client.put(
+            f"{url}?item_id=15",
+            {
+                "name": "Atualizado",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        self.assertEqual(
+            mock_execute.call_args.kwargs["parameters"],
+            {
+                "item_id": "15",
+                "name": "Atualizado",
+            },
+        )
+
+    @patch("apps.integrations.api.views.IntegrationGateway.execute")
+    def test_patch_merges_query_parameters_and_body(
+        self,
+        mock_execute,
+    ):
+        mock_execute.return_value = {"id": 15}
+
+        _, url = self._create_http_operation(
+            "PATCH",
+            "Atualizar parcialmente com query",
+        )
+
+        self.authenticate()
+
+        response = self.client.patch(
+            f"{url}?item_id=15",
+            {
+                "name": "Parcial",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        self.assertEqual(
+            mock_execute.call_args.kwargs["parameters"],
+            {
+                "item_id": "15",
+                "name": "Parcial",
+            },
+        )

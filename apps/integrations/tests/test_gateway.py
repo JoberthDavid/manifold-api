@@ -887,3 +887,110 @@ class IntegrationGatewayTests(LiveServerTestCase):
             headers["X-API-Key"],
             "secret",
         )
+
+    @patch("apps.integrations.gateway.requests.request")
+    def test_put_request_builds_path_and_json_body(self, request):
+        operation = IntegrationOperation.objects.create(
+            integration=self.integration,
+            name="Update Resource",
+            http_method=HttpMethod.PUT,
+            path="/resources/{resource_id}",
+            request_schema={
+                "body": {
+                    "name": "name",
+                    "value": "value",
+                },
+            },
+        )
+
+        request.return_value = self._response()
+
+        result = self.gateway.execute(
+            operation=operation,
+            parameters={
+                "resource_id": "123",
+                "name": "Updated",
+                "value": "200",
+            },
+        )
+
+        request.assert_called_once_with(
+            method="PUT",
+            url="https://api.example.com/resources/123",
+            timeout=10,
+            params={},
+            headers={},
+            json={
+                "name": "Updated",
+                "value": "200",
+            },
+        )
+
+        self.assertEqual(result, {"result": "ok"})
+
+    @patch("apps.integrations.gateway.requests.request")
+    def test_patch_request_builds_path_and_json_body(self, request):
+        operation = IntegrationOperation.objects.create(
+            integration=self.integration,
+            name="Patch Resource",
+            http_method=HttpMethod.PATCH,
+            path="/resources/{resource_id}",
+            request_schema={
+                "body": {
+                    "name": "name",
+                },
+            },
+        )
+
+        request.return_value = self._response()
+
+        self.gateway.execute(
+            operation=operation,
+            parameters={
+                "resource_id": "123",
+                "name": "Partially Updated",
+            },
+        )
+
+        request.assert_called_once_with(
+            method="PATCH",
+            url="https://api.example.com/resources/123",
+            timeout=10,
+            params={},
+            headers={},
+            json={
+                "name": "Partially Updated",
+            },
+        )
+
+    @patch("apps.integrations.gateway.requests.request")
+    def test_delete_request_builds_path(self, request):
+        operation = IntegrationOperation.objects.create(
+            integration=self.integration,
+            name="Delete Resource",
+            http_method=HttpMethod.DELETE,
+            path="/resources/{resource_id}",
+            request_schema={},
+        )
+
+        request.return_value = self._response(
+            status_code=204,
+            content=b"",
+        )
+
+        result = self.gateway.execute(
+            operation=operation,
+            parameters={
+                "resource_id": "123",
+            },
+        )
+
+        request.assert_called_once_with(
+            method="DELETE",
+            url="https://api.example.com/resources/123",
+            timeout=10,
+            params={},
+            headers={},
+        )
+
+        self.assertIsNone(result)
